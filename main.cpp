@@ -4,40 +4,21 @@
 #include <Eigen/Dense>
 #include <algorithm>
 #include <opencv2/opencv.hpp>
+#include <limits>
 
 constexpr int width = 500;
 constexpr int height = 500;
 
 constexpr float MY_PI = 3.1415926f;
 
-static bool insideTriangle(const Eigen::Vector2f& p, const std::vector<Eigen::Vector3f>& triangle)
+constexpr float epsilon = 1e-6f;
+
+static float cross2D(
+    const Eigen::Vector2f& a,
+    const Eigen::Vector2f& b)
 {
-    Eigen::Vector2f a = triangle[0].head<2>();
-    Eigen::Vector2f b = triangle[1].head<2>();
-    Eigen::Vector2f c = triangle[2].head<2>();
-
-    auto cross2D = [](Eigen::Vector2f p1, Eigen::Vector2f p2)
-        {
-            return p1.x() * p2.y() - p1.y() * p2.x();
-        };
-
-    float cross1 = cross2D(
-        a - b, a - p
-    );
-
-    float cross2 = cross2D(
-        b - c, b - p
-    );
-
-    float cross3 = cross2D(
-        c - a, c - p
-    );
-
-    bool has_positive = ((cross1 > 0) || (cross2 > 0) || (cross3 > 0));
-    bool has_negative = ((cross1 < 0) || (cross2 < 0) || (cross3 < 0));
-
-    return !(has_positive && has_negative);
-};
+    return a.x() * b.y() - a.y() * b.x();
+}
 
 int main()
 {
@@ -109,7 +90,7 @@ int main()
     }
 
     std::vector<Eigen::Vector3f> NDC_positions;
-    constexpr float epsilon = 1e-6f;
+
     for (const Eigen::Vector4f& clip_space_position : clip_space_positions)
     {
         if (std::abs(clip_space_position.w()) > epsilon)
@@ -130,6 +111,13 @@ int main()
     }
 
     std::vector<Eigen::Vector3f>& triangle = screen_space_positions;
+    Eigen::Vector2f a = triangle[0].head<2>();
+    Eigen::Vector2f b = triangle[1].head<2>();
+    Eigen::Vector2f c = triangle[2].head<2>();
+
+    float s_alpha = cross2D(a - b, a - c);
+    float s_beta = cross2D(b - a, b - c);
+    float s_gamma = cross2D(c - a, c - b);
 
     float x_min = std::min({ triangle[0].x(), triangle[1].x(), triangle[2].x() });
     float x_max = std::max({ triangle[0].x(), triangle[1].x(), triangle[2].x() });
@@ -141,21 +129,39 @@ int main()
     int y_begin = std::max({ 0, static_cast<int>(std::floor(y_min)) });
     int y_end = std::min({ height - 1, static_cast<int>(std::ceil(y_max)) });
 
-    for (int x = x_begin; x <= x_end; x++)
-    {
-        for (int y = y_begin; y <= y_end; y++)
-        {
-            Eigen::Vector2f pixel_center(
-                static_cast<float>(x) + 0.5f,
-                static_cast<float>(y) + 0.5f
-            );
+    std::vector<float> depth_buffer(
+        width * height,
+        std::numeric_limits<float>::infinity()
+    );
 
-            if (insideTriangle(pixel_center, triangle))
+    if (std::abs(s_alpha) >= epsilon)
+    {
+        for (int x = x_begin; x <= x_end; x++)
+        {
+            for (int y = y_begin; y <= y_end; y++)
             {
-                image.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);
+                int index = y * width + x;
+
+                Eigen::Vector2f pixel_center(
+                    static_cast<float>(x) + 0.5f,
+                    static_cast<float>(y) + 0.5f
+                );
+
+                float alpha = cross2D(pixel_center - b, pixel_center - c) / s_alpha;
+                float beta = cross2D(pixel_center - a, pixel_center - c) / s_beta;
+                float gamma = cross2D(pixel_center - a, pixel_center - b) / s_gamma;
+                
+                if ((alpha >= -epsilon) && (beta >= -epsilon) && (gamma >= -epsilon))
+                {
+                    float pixel_depth = alpha * triangle[0].z() + beta * triangle[1].z() + gamma * triangle[2].z();
+                    if (pixel_depth < depth_buffer[index])
+                    {
+                        depth_buffer[index] = pixel_depth;
+                        image.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);
+                    }
+                }
             }
         }
+        cv::imwrite("triangle.png", image);
     }
-
-    cv::imwrite("triangle.png", image);
 }

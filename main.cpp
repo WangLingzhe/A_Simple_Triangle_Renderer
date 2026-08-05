@@ -3,39 +3,51 @@
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <algorithm>
+#include <opencv2/opencv.hpp>
 
 constexpr int width = 500;
 constexpr int height = 500;
 
 constexpr float MY_PI = 3.1415926f;
 
-static bool insideTriangle(Eigen::Vector3f p, std::vector<Eigen::Vector3f>& triangle)
+static bool insideTriangle(const Eigen::Vector2f& p, const std::vector<Eigen::Vector3f>& triangle)
 {
-    auto cross2D = [](Eigen::Vector2f a, Eigen::Vector2f b)
+    Eigen::Vector2f a = triangle[0].head<2>();
+    Eigen::Vector2f b = triangle[1].head<2>();
+    Eigen::Vector2f c = triangle[2].head<2>();
+
+    auto cross2D = [](Eigen::Vector2f p1, Eigen::Vector2f p2)
         {
-            return a.x() * b.x() - a.y() * b.y();
+            return p1.x() * p2.y() - p1.y() * p2.x();
         };
 
     float cross1 = cross2D(
-        triangle[1] - triangle[0], triangle[1] - p.head<2>
+        a - b, a - p
     );
 
     float cross2 = cross2D(
-        triangle[2] - triangle[1], triangle[2] - p.head<2>
+        b - c, b - p
     );
 
     float cross3 = cross2D(
-        triangle[0] - triangle[2], triangle[0] - p.head<2>
+        c - a, c - p
     );
 
-    bool all_positive = ((cross1 > 0) || (cross2 > 0) || (cross3 > 0));
-    bool all_negative = ((cross1 < 0) || (cross2 < 0) || (cross3 < 0));
+    bool has_positive = ((cross1 > 0) || (cross2 > 0) || (cross3 > 0));
+    bool has_negative = ((cross1 < 0) || (cross2 < 0) || (cross3 < 0));
 
-    return !(all_positive && all_negative);
+    return !(has_positive && has_negative);
 };
 
 int main()
 {
+    cv::Mat image(
+        height,
+        width,
+        CV_8UC3,
+        cv::Scalar(0, 0, 0)
+    );
+
     std::vector<Eigen::Vector4f> model_space_positions =
     {
         {-1.0f, -1.0f, 0.0f, 1.0f},
@@ -129,5 +141,21 @@ int main()
     int y_begin = std::max({ 0, static_cast<int>(std::floor(y_min)) });
     int y_end = std::min({ height - 1, static_cast<int>(std::ceil(y_max)) });
 
+    for (int x = x_begin; x <= x_end; x++)
+    {
+        for (int y = y_begin; y <= y_end; y++)
+        {
+            Eigen::Vector2f pixel_center(
+                static_cast<float>(x) + 0.5f,
+                static_cast<float>(y) + 0.5f
+            );
 
+            if (insideTriangle(pixel_center, triangle))
+            {
+                image.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);
+            }
+        }
+    }
+
+    cv::imwrite("triangle.png", image);
 }
